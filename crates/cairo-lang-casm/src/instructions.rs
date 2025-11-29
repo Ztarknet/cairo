@@ -20,6 +20,7 @@ pub enum InstructionBody {
     Jump(JumpInstruction),
     Ret(RetInstruction),
     Blake2sCompress(Blake2sCompressInstruction),
+    Blake2bCompress(Blake2bCompressInstruction),
 }
 impl InstructionBody {
     pub fn op_size(&self) -> usize {
@@ -32,6 +33,7 @@ impl InstructionBody {
             InstructionBody::Jnz(insn) => insn.op_size(),
             InstructionBody::Ret(insn) => insn.op_size(),
             InstructionBody::Blake2sCompress(insn) => insn.op_size(),
+            InstructionBody::Blake2bCompress(insn) => insn.op_size(),
         }
     }
 }
@@ -46,6 +48,7 @@ impl Display for InstructionBody {
             InstructionBody::Jump(insn) => write!(f, "{insn}",),
             InstructionBody::Ret(insn) => write!(f, "{insn}",),
             InstructionBody::Blake2sCompress(insn) => write!(f, "{insn}",),
+            InstructionBody::Blake2bCompress(insn) => write!(f, "{insn}",),
         }
     }
 }
@@ -222,6 +225,29 @@ impl Display for Blake2sCompressInstruction {
         write!(
             f,
             "blake2s[state={}, message={}, byte_count={}, finalize={}] => [ap + 0]",
+            self.state, self.message, self.byte_count, self.finalize
+        )
+    }
+}
+
+/// Represents a blake2b instruction, "blake2b".
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct Blake2bCompressInstruction {
+    pub state: CellRef,
+    pub byte_count: CellRef,
+    pub message: CellRef,
+    pub finalize: bool,
+}
+impl Blake2bCompressInstruction {
+    pub fn op_size(&self) -> usize {
+        1
+    }
+}
+impl Display for Blake2bCompressInstruction {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "blake2b[state={}, message={}, byte_count={}, finalize={}] => [ap + 0]",
             self.state, self.message, self.byte_count, self.finalize
         )
     }

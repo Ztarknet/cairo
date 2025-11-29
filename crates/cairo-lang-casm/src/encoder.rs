@@ -124,6 +124,10 @@ impl InstructionRepr {
                 bigint_encoding |= BigInt::from(2) << OPCODE_EXT_OFFSET
             }
             OpcodeExtension::QM31 => bigint_encoding |= BigInt::from(3) << OPCODE_EXT_OFFSET,
+            OpcodeExtension::Blake2b => bigint_encoding |= BigInt::from(4) << OPCODE_EXT_OFFSET,
+            OpcodeExtension::Blake2bFinalize => {
+                bigint_encoding |= BigInt::from(5) << OPCODE_EXT_OFFSET
+            }
         };
         if let Some(imm) = self.imm.clone() {
             vec![bigint_encoding, imm]
