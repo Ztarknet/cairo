@@ -14,6 +14,8 @@
         "array_snapshot_pop_back",
         "array_snapshot_pop_front",
         "bitwise",
+        "blake2b_compress",
+        "blake2b_finalize",
         "blake2s_compress",
         "blake2s_finalize",
         "bool_and_impl",

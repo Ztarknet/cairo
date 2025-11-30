@@ -1,7 +1,7 @@
 use super::ap_tracking::ApTrackingLibfunc;
 use super::array::{ArrayLibfunc, ArrayType};
 use super::bitwise::BitwiseType;
-use super::blake::{Blake2sState, BlakeLibfunc};
+use super::blake::{Blake2bState, Blake2sState, BlakeLibfunc};
 use super::boolean::BoolLibfunc;
 use super::bounded_int::{BoundedIntLibfunc, BoundedIntType};
 use super::branch_align::BranchAlignLibfunc;
@@ -63,6 +63,7 @@ define_type_hierarchy! {
         Coupon(CouponType),
         Bitwise(BitwiseType),
         Blake(Blake2sState),
+        Blake2b(Blake2bState),
         Box(BoxType),
         Circuit(CircuitType),
         Const(ConstType),

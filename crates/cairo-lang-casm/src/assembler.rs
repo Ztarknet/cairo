@@ -62,6 +62,8 @@ pub enum OpcodeExtension {
     Stone,
     Blake2s,
     Blake2sFinalize,
+    Blake2b,
+    Blake2bFinalize,
     QM31,
 }
 
@@ -250,6 +252,28 @@ impl Instruction {
                         OpcodeExtension::Blake2sFinalize
                     } else {
                         OpcodeExtension::Blake2s
+                    },
+                }
+            }
+            InstructionBody::Blake2bCompress(insn) => {
+                assert!(self.inc_ap);
+                InstructionRepr {
+                    off0: insn.byte_count.offset,
+                    off1: insn.state.offset,
+                    off2: insn.message.offset,
+                    imm: None,
+                    dst_register: insn.byte_count.register,
+                    op0_register: insn.state.register,
+                    op1_addr: insn.message.register.to_op1_addr(),
+                    res: Res::Op1,
+                    pc_update: PcUpdate::Regular,
+                    ap_update: ApUpdate::Add1,
+                    fp_update: FpUpdate::Regular,
+                    opcode: Opcode::Nop,
+                    opcode_extension: if insn.finalize {
+                        OpcodeExtension::Blake2bFinalize
+                    } else {
+                        OpcodeExtension::Blake2b
                     },
                 }
             }

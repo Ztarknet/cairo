@@ -21,3 +21,28 @@ pub extern fn blake2s_compress(
 pub extern fn blake2s_finalize(
     state: Blake2sState, byte_count: u32, msg: Blake2sInput,
 ) -> Blake2sState nopanic;
+
+
+/// State for Blake2b hash (uses u64 instead of u32).
+type Blake2bState = Box<[u64; 8]>;
+
+/// The input to the Blake2b compress function (uses u64 instead of u32).
+type Blake2bInput = Box<[u64; 16]>;
+
+
+/// The blake2b compress function, which takes a state, a byte count, and a message, and returns a
+/// new state.
+/// `byte_count` should be the total number of bytes hashed after hashing the current `msg`.
+pub extern fn blake2b_compress(
+    state: Blake2bState, byte_count: u64, msg: Blake2bInput,
+) -> Blake2bState nopanic;
+
+
+/// A variant of `blake2b_compress` for the final block of the message.
+///
+/// The input `msg` must always be exactly 16 `u64` elements, padded with zeros if necessary,
+/// regardless of the value of `byte_count`. Using any padding scheme other than zero-padding
+/// will produce a different hash output.
+pub extern fn blake2b_finalize(
+    state: Blake2bState, byte_count: u64, msg: Blake2bInput,
+) -> Blake2bState nopanic;
