@@ -1,5 +1,5 @@
 use super::boxing::box_ty;
-use super::int::unsigned::{Uint32Type, Uint64Type};
+use super::int::unsigned::Uint32Type;
 use super::utils::fixed_size_array_ty;
 use crate::define_libfunc_hierarchy;
 use crate::extensions::lib_func::{
@@ -100,13 +100,11 @@ impl NoGenericArgsGenericLibfunc for Blake2bCompressLibFunc {
         &self,
         context: &dyn SignatureSpecializationContext,
     ) -> Result<LibfuncSignature, SpecializationError> {
-        let u64_ty = context.get_concrete_type(Uint64Type::id(), &[])?;
-        // Blake2b state is 8 x u64 (instead of 8 x u32 for Blake2s)
-        let state = box_ty(context, fixed_size_array_ty(context, u64_ty.clone(), 8)?)?;
-        // Blake2b message is 16 x u64 (instead of 16 x u32 for Blake2s)
-        let msg_ty = box_ty(context, fixed_size_array_ty(context, u64_ty.clone(), 16)?)?;
+        let u32_ty = context.get_concrete_type(Uint32Type::id(), &[])?;
+        let state = box_ty(context, fixed_size_array_ty(context, u32_ty.clone(), 8)?)?;
+        let msg_ty = box_ty(context, fixed_size_array_ty(context, u32_ty.clone(), 16)?)?;
         Ok(LibfuncSignature::new_non_branch(
-            vec![state.clone(), u64_ty, msg_ty],
+            vec![state.clone(), u32_ty, msg_ty],
             vec![OutputVarInfo {
                 ty: state,
                 ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 },
@@ -126,13 +124,11 @@ impl NoGenericArgsGenericLibfunc for Blake2bFinalizeLibFunc {
         &self,
         context: &dyn SignatureSpecializationContext,
     ) -> Result<LibfuncSignature, SpecializationError> {
-        let u64_ty = context.get_concrete_type(Uint64Type::id(), &[])?;
-        // Blake2b state is 8 x u64 (instead of 8 x u32 for Blake2s)
-        let state = box_ty(context, fixed_size_array_ty(context, u64_ty.clone(), 8)?)?;
-        // Blake2b message is 16 x u64 (instead of 16 x u32 for Blake2s)
-        let msg_ty = box_ty(context, fixed_size_array_ty(context, u64_ty.clone(), 16)?)?;
+        let u32_ty = context.get_concrete_type(Uint32Type::id(), &[])?;
+        let state = box_ty(context, fixed_size_array_ty(context, u32_ty.clone(), 8)?)?;
+        let msg_ty = box_ty(context, fixed_size_array_ty(context, u32_ty.clone(), 16)?)?;
         Ok(LibfuncSignature::new_non_branch(
-            vec![state.clone(), u64_ty, msg_ty],
+            vec![state.clone(), u32_ty, msg_ty],
             vec![OutputVarInfo {
                 ty: state,
                 ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 },
