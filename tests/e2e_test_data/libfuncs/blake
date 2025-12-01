@@ -96,7 +96,7 @@ SmallE2ETestRunner
 //! > cairo_code
 use core::blake::{Blake2bInput, Blake2bState, blake2b_compress};
 
-fn foo(s: Blake2bState, byte_count: u32, m: Blake2bInput) -> Blake2bState {
+fn foo(s: Blake2bState, byte_count: u64, m: Blake2bInput) -> Blake2bState {
     blake2b_compress(s, byte_count, m)
 }
 
@@ -114,11 +114,11 @@ ret;
 test::foo: SmallOrderedMap({Const: 100})
 
 //! > sierra_code
-type Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32>> = Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32>> [storable: true, drop: true, dup: true, zero_sized: false];
-type Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32>> = Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32>> [storable: true, drop: true, dup: true, zero_sized: false];
-type u32 = u32 [storable: true, drop: true, dup: true, zero_sized: false];
-type Tuple<u32, u32, u32, u32, u32, u32, u32, u32> = Struct<ut@Tuple, u32, u32, u32, u32, u32, u32, u32, u32> [storable: true, drop: true, dup: true, zero_sized: false];
-type Tuple<u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32> = Struct<ut@Tuple, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32> [storable: true, drop: true, dup: true, zero_sized: false];
+type Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64>> = Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64>> [storable: true, drop: true, dup: true, zero_sized: false];
+type Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64>> = Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64>> [storable: true, drop: true, dup: true, zero_sized: false];
+type u64 = u64 [storable: true, drop: true, dup: true, zero_sized: false];
+type Tuple<u64, u64, u64, u64, u64, u64, u64, u64> = Struct<ut@Tuple, u64, u64, u64, u64, u64, u64, u64, u64> [storable: true, drop: true, dup: true, zero_sized: false];
+type Tuple<u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64> = Struct<ut@Tuple, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64> [storable: true, drop: true, dup: true, zero_sized: false];
 
 libfunc blake2b_compress = blake2b_compress;
 
@@ -126,7 +126,7 @@ F0:
 blake2b_compress([0], [1], [2]) -> ([3]);
 return([3]);
 
-test::foo@F0([0]: Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32>>, [1]: u32, [2]: Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32>>) -> (Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32>>);
+test::foo@F0([0]: Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64>>, [1]: u64, [2]: Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64>>) -> (Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64>>);
 
 //! > ==========================================================================
 
@@ -140,7 +140,7 @@ SmallE2ETestRunner
 //! > cairo_code
 use core::blake::{Blake2bInput, Blake2bState, blake2b_finalize};
 
-fn foo(s: Blake2bState, byte_count: u32, m: Blake2bInput) -> Blake2bState {
+fn foo(s: Blake2bState, byte_count: u64, m: Blake2bInput) -> Blake2bState {
     blake2b_finalize(s, byte_count, m)
 }
 
@@ -158,11 +158,11 @@ ret;
 test::foo: SmallOrderedMap({Const: 100})
 
 //! > sierra_code
-type Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32>> = Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32>> [storable: true, drop: true, dup: true, zero_sized: false];
-type Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32>> = Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32>> [storable: true, drop: true, dup: true, zero_sized: false];
-type u32 = u32 [storable: true, drop: true, dup: true, zero_sized: false];
-type Tuple<u32, u32, u32, u32, u32, u32, u32, u32> = Struct<ut@Tuple, u32, u32, u32, u32, u32, u32, u32, u32> [storable: true, drop: true, dup: true, zero_sized: false];
-type Tuple<u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32> = Struct<ut@Tuple, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32> [storable: true, drop: true, dup: true, zero_sized: false];
+type Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64>> = Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64>> [storable: true, drop: true, dup: true, zero_sized: false];
+type Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64>> = Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64>> [storable: true, drop: true, dup: true, zero_sized: false];
+type u64 = u64 [storable: true, drop: true, dup: true, zero_sized: false];
+type Tuple<u64, u64, u64, u64, u64, u64, u64, u64> = Struct<ut@Tuple, u64, u64, u64, u64, u64, u64, u64, u64> [storable: true, drop: true, dup: true, zero_sized: false];
+type Tuple<u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64> = Struct<ut@Tuple, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64> [storable: true, drop: true, dup: true, zero_sized: false];
 
 libfunc blake2b_finalize = blake2b_finalize;
 
@@ -170,4 +170,4 @@ F0:
 blake2b_finalize([0], [1], [2]) -> ([3]);
 return([3]);
 
-test::foo@F0([0]: Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32>>, [1]: u32, [2]: Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32>>) -> (Box<Tuple<u32, u32, u32, u32, u32, u32, u32, u32>>);
+test::foo@F0([0]: Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64>>, [1]: u64, [2]: Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64>>) -> (Box<Tuple<u64, u64, u64, u64, u64, u64, u64, u64>>);
