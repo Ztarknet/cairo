@@ -2,32 +2,43 @@
 //!
 //! # Examples
 //!
-//! Simple one-shot hashing:
+//! Simple one-shot hashing with Array:
 //! ```
 //! use core::blake::blake2s;
-//! let hash = blake2s(@"hello world");
+//! let input: Array<u8> = array![0x68, 0x65, 0x6c, 0x6c, 0x6f];  // "hello"
+//! let state = blake2s(input);
+//! ```
+//!
+//! Simple one-shot hashing with ByteArray:
+//! ```
+//! use core::blake::blake2s_bytearray;
+//! let state = blake2s_bytearray(@"hello world");
 //! ```
 //!
 //! Builder pattern with personalization:
 //! ```
 //! use core::blake::{Blake2bParams, Blake2bParamsTrait};
-//! let hash = Blake2bParams::new()
+//! // Personalization as two little-endian u64 words
+//! let input: Array<u8> = array![0x68, 0x65, 0x6c, 0x6c, 0x6f];
+//! let state = Blake2bParams::new()
 //!     .hash_length(32)
-//!     .personal(@"myapp___")
-//!     .hash(@"input data");
+//!     .personal([0x7070615f79706d79, 0x5f5f5f5f5f5f5f5f])
+//!     .hash(input);
 //! ```
 //!
 //! Fluent API with chaining:
 //! ```
 //! use core::blake::{Blake2sParams, Blake2sParamsTrait, Blake2sHasherTrait};
-//! let hash = Blake2sParams::new()
+//! // Personalization as two little-endian u32 words
+//! let input: Array<u8> = array![0x68, 0x65, 0x6c, 0x6c, 0x6f];
+//! let state = Blake2sParams::new()
 //!     .hash_length(16)
-//!     .personal(@"myapp___")
-//!     .update(@"input data")
+//!     .personal([0x7061796d, 0x5f5f5f70])
+//!     .update(input)
 //!     .finalize();
 //! ```
 
-use crate::array::ArrayTrait;
+use crate::array::{ArrayTrait};
 use crate::box::BoxTrait;
 use crate::byte_array::ByteArrayTrait;
 use crate::option::OptionTrait;
@@ -141,9 +152,11 @@ pub mod blake2b_const {
 ///
 /// Use the builder pattern to configure the hash:
 /// ```
-/// let params = Blake2sParams::new()
+/// let input: Array<u8> = array![0x68, 0x65, 0x6c, 0x6c, 0x6f];
+/// let state = Blake2sParams::new()
 ///     .hash_length(16)
-///     .personal(@"myapp___");
+///     .personal([0x7061796d, 0x5f5f5f70])
+///     .hash(input);
 /// ```
 #[derive(Drop, Clone)]
 pub struct Blake2sParams {
@@ -169,8 +182,6 @@ pub struct Blake2sParams {
     node_depth: u8,
     /// Inner hash byte length (default: 0)
     inner_length: u8,
-    /// Whether this is the last node in tree mode
-    last_node: bool,
 }
 
 /// Trait for Blake2sParams builder pattern.
@@ -197,7 +208,6 @@ pub impl Blake2sParamsImpl of Blake2sParamsTrait {
             node_offset: 0,
             node_depth: 0,
             inner_length: 0,
-            last_node: false,
         }
     }
 
@@ -212,43 +222,29 @@ pub impl Blake2sParamsImpl of Blake2sParamsTrait {
 
     /// Sets a secret key for keyed hashing (MAC mode).
     ///
-    /// The key can be up to 32 bytes. The key is provided as a ByteArray
-    /// and will be padded to the block size internally.
+    /// The key is provided as 8 little-endian u32 words (32 bytes total).
+    /// Unused bytes should be zero-padded. The actual key length in bytes
+    /// must be provided separately.
     ///
     /// # Panics
-    /// Panics if key length exceeds 32 bytes.
-    fn key(self: Blake2sParams, key: @ByteArray) -> Blake2sParams {
-        let key_len = key.len();
-        assert(key_len <= 32, 'key must be <= 32 bytes');
-
-        let key_words = bytes_to_u32_array_8(key);
-        Blake2sParams { key_length: key_len.try_into().unwrap(), key: key_words, ..self }
+    /// Panics if key_length exceeds 32 bytes.
+    fn key(self: Blake2sParams, key: [u32; 8], key_length: u8) -> Blake2sParams {
+        assert(key_length <= 32, 'key must be <= 32 bytes');
+        Blake2sParams { key_length, key, ..self }
     }
 
-    /// Sets the salt value (up to 8 bytes).
+    /// Sets the salt value (8 bytes as two little-endian u32 words).
     ///
-    /// Salt is used for randomized hashing. If shorter than 8 bytes,
-    /// it will be padded with zeros.
-    ///
-    /// # Panics
-    /// Panics if salt exceeds 8 bytes.
-    fn salt(self: Blake2sParams, salt: @ByteArray) -> Blake2sParams {
-        assert(salt.len() <= 8, 'salt must be <= 8 bytes');
-        let salt_words = bytes_to_u32_array_2(salt);
-        Blake2sParams { salt: salt_words, ..self }
+    /// Salt is used for randomized hashing.
+    fn salt(self: Blake2sParams, salt: [u32; 2]) -> Blake2sParams {
+        Blake2sParams { salt, ..self }
     }
 
-    /// Sets the personalization string (up to 8 bytes).
+    /// Sets the personalization string (8 bytes as two little-endian u32 words).
     ///
-    /// Personalization is used for domain separation. If shorter than
-    /// 8 bytes, it will be padded with zeros.
-    ///
-    /// # Panics
-    /// Panics if personalization exceeds 8 bytes.
-    fn personal(self: Blake2sParams, personal: @ByteArray) -> Blake2sParams {
-        assert(personal.len() <= 8, 'personal must be <= 8 bytes');
-        let personal_words = bytes_to_u32_array_2(personal);
-        Blake2sParams { personal: personal_words, ..self }
+    /// Personalization is used for domain separation.
+    fn personal(self: Blake2sParams, personal: [u32; 2]) -> Blake2sParams {
+        Blake2sParams { personal, ..self }
     }
 
     /// Sets the fanout for tree hashing.
@@ -291,11 +287,6 @@ pub impl Blake2sParamsImpl of Blake2sParamsTrait {
         Blake2sParams { inner_length: length, ..self }
     }
 
-    /// Marks this node as the last in its row for tree hashing.
-    fn last_node(self: Blake2sParams, last: bool) -> Blake2sParams {
-        Blake2sParams { last_node: last, ..self }
-    }
-
     /// Creates a Hasher for incremental hashing with these parameters.
     fn to_state(self: Blake2sParams) -> Blake2sHasher {
         let h = self.compute_initial_state();
@@ -306,7 +297,6 @@ pub impl Blake2sParamsImpl of Blake2sParamsTrait {
             pending_bytes: 0,
             byte_count: 0,
             hash_length: self.hash_length,
-            last_node: self.last_node,
             is_keyed: self.key_length > 0,
         };
 
@@ -336,10 +326,21 @@ pub impl Blake2sParamsImpl of Blake2sParamsTrait {
         state
     }
 
-    /// Performs a one-shot hash with these parameters.
-    fn hash(self: Blake2sParams, input: @ByteArray) -> Array<u8> {
+    /// Performs a one-shot hash from input array.
+    ///
+    /// Returns the raw hash state.
+    fn hash(self: Blake2sParams, input: Array<u8>) -> Blake2sState {
         let mut state = self.to_state();
         state.update(input);
+        state.finalize()
+    }
+
+    /// Performs a one-shot hash with ByteArray input.
+    ///
+    /// Returns the raw hash state.
+    fn hash_bytearray(self: Blake2sParams, input: @ByteArray) -> Blake2sState {
+        let mut state = self.to_state();
+        state.update_bytearray(input);
         state.finalize()
     }
 
@@ -347,15 +348,23 @@ pub impl Blake2sParamsImpl of Blake2sParamsTrait {
     ///
     /// This enables fluent API usage:
     /// ```
-    /// let hash = Blake2sParams::new()
+    /// let input: Array<u8> = array![0x68, 0x65, 0x6c, 0x6c, 0x6f];
+    /// let state = Blake2sParams::new()
     ///     .hash_length(16)
-    ///     .personal(@"myapp___")
-    ///     .update(@"input data")
+    ///     .personal([0x7061796d, 0x5f5f5f70])
+    ///     .update(input)
     ///     .finalize();
     /// ```
-    fn update(self: Blake2sParams, input: @ByteArray) -> Blake2sHasher {
+    fn update(self: Blake2sParams, input: Array<u8>) -> Blake2sHasher {
         let mut state = self.to_state();
         state.update(input);
+        state
+    }
+
+    /// Creates a hasher, updates it with ByteArray input, and returns it for chaining.
+    fn update_bytearray(self: Blake2sParams, input: @ByteArray) -> Blake2sHasher {
+        let mut state = self.to_state();
+        state.update_bytearray(input);
         state
     }
 }
@@ -423,8 +432,6 @@ pub struct Blake2sHasher {
     byte_count: u32,
     /// Configured hash output length
     hash_length: u8,
-    /// Whether this is the last node in tree mode
-    last_node: bool,
     /// Whether this state was initialized with a key
     is_keyed: bool,
 }
@@ -438,7 +445,52 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
     }
 
     /// Updates the hash state with additional input data.
-    fn update(ref self: Blake2sHasher, input: @ByteArray) {
+    fn update(ref self: Blake2sHasher, input: Array<u8>) {
+        let input_len = input.len();
+        if input_len == 0 {
+            return;
+        }
+
+        // If buffer is full (e.g., from keyed hashing) and we have new data,
+        // compress the buffer first
+        if self.buffer.len() == 16 {
+            self.byte_count += 64;
+            let block = extract_block_16(@self.buffer, 0);
+            self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
+            self.buffer = ArrayTrait::new();
+        }
+
+        let mut i: usize = 0;
+
+        // Process each input byte
+        while i < input_len {
+            let byte: u32 = (*input[i]).into();
+            let shift: usize = self.pending_bytes.into() * 8;
+            self.pending_word = self.pending_word | (byte * pow2_u32(shift));
+            self.pending_bytes += 1;
+
+            // If we have a complete word, add it to the buffer
+            if self.pending_bytes == 4 {
+                // Check if buffer is full BEFORE appending
+                // We compress if buffer is full and we have more data to process
+                if self.buffer.len() == 16 {
+                    self.byte_count += 64;
+                    let block = extract_block_16(@self.buffer, 0);
+                    self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
+                    self.buffer = ArrayTrait::new();
+                }
+
+                self.buffer.append(self.pending_word);
+                self.pending_word = 0;
+                self.pending_bytes = 0;
+            }
+
+            i += 1;
+        };
+    }
+
+    /// Updates the hash state with ByteArray input.
+    fn update_bytearray(ref self: Blake2sHasher, input: @ByteArray) {
         let input_len = input.len();
         if input_len == 0 {
             return;
@@ -482,17 +534,15 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
         };
     }
 
-    /// Finalizes the hash and returns the digest.
-    ///
-    /// The returned array length equals the configured hash_length.
-    fn finalize(ref self: Blake2sHasher) -> Array<u8> {
+    /// Finalizes the hash and returns the raw state.
+    fn finalize(ref self: Blake2sHasher) -> Blake2sState {
         // Add any pending partial word to the buffer
         if self.pending_bytes > 0 {
             self.buffer.append(self.pending_word);
         }
 
         // Calculate final byte count
-        let buffer_words: u32 = self.buffer.len().try_into().unwrap();
+        let buffer_words: u32 = self.buffer.len();
         let pending: u32 = self.pending_bytes.into();
         // If pending_bytes > 0, we added a partial word, so byte count is:
         // byte_count + (buffer_words - 1) * 4 + pending_bytes
@@ -512,25 +562,8 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
         // Extract final block
         let block = extract_block_16(@self.buffer, 0);
 
-        // Finalize
-        self.h = blake2s_finalize(self.h, final_byte_count, BoxTrait::new(block));
-
-        // Convert state to bytes (little-endian) and truncate to hash_length
-        let [s0, s1, s2, s3, s4, s5, s6, s7] = self.h.unbox();
-        let hash_len: usize = self.hash_length.into();
-
-        // Extract bytes from each word (little-endian)
-        let mut result: Array<u8> = ArrayTrait::new();
-        append_word_bytes(ref result, s0, hash_len, 0);
-        append_word_bytes(ref result, s1, hash_len, 4);
-        append_word_bytes(ref result, s2, hash_len, 8);
-        append_word_bytes(ref result, s3, hash_len, 12);
-        append_word_bytes(ref result, s4, hash_len, 16);
-        append_word_bytes(ref result, s5, hash_len, 20);
-        append_word_bytes(ref result, s6, hash_len, 24);
-        append_word_bytes(ref result, s7, hash_len, 28);
-
-        result
+        // Finalize and return state
+        blake2s_finalize(self.h, final_byte_count, BoxTrait::new(block))
     }
 
     /// Returns the number of bytes that have been processed.
@@ -538,7 +571,7 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
     /// Note: If the hasher was initialized with a key, this does not
     /// include the key block in the count (matching reference behavior).
     fn count(self: @Blake2sHasher) -> u32 {
-        let buffer_len: u32 = self.buffer.len().try_into().unwrap();
+        let buffer_len: u32 = self.buffer.len();
         let pending: u32 = (*self.pending_bytes).into();
         let raw_count = *self.byte_count + buffer_len * 4 + pending;
         if *self.is_keyed {
@@ -562,9 +595,11 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
 ///
 /// Use the builder pattern to configure the hash:
 /// ```
-/// let params = Blake2bParams::new()
+/// let input: Array<u8> = array![0x68, 0x65, 0x6c, 0x6c, 0x6f];
+/// let state = Blake2bParams::new()
 ///     .hash_length(32)
-///     .personal(@"myapp___________");
+///     .personal([0x7070615f79706d79, 0x5f5f5f5f5f5f5f5f])
+///     .hash(input);
 /// ```
 #[derive(Drop, Clone)]
 pub struct Blake2bParams {
@@ -590,8 +625,6 @@ pub struct Blake2bParams {
     node_depth: u8,
     /// Inner hash byte length (default: 0)
     inner_length: u8,
-    /// Whether this is the last node in tree mode
-    last_node: bool,
 }
 
 /// Trait for Blake2bParams builder pattern.
@@ -618,7 +651,6 @@ pub impl Blake2bParamsImpl of Blake2bParamsTrait {
             node_offset: 0,
             node_depth: 0,
             inner_length: 0,
-            last_node: false,
         }
     }
 
@@ -633,43 +665,29 @@ pub impl Blake2bParamsImpl of Blake2bParamsTrait {
 
     /// Sets a secret key for keyed hashing (MAC mode).
     ///
-    /// The key can be up to 64 bytes. The key is provided as a ByteArray
-    /// and will be padded to the block size internally.
+    /// The key is provided as 8 little-endian u64 words (64 bytes total).
+    /// Unused bytes should be zero-padded. The actual key length in bytes
+    /// must be provided separately.
     ///
     /// # Panics
-    /// Panics if key length exceeds 64 bytes.
-    fn key(self: Blake2bParams, key: @ByteArray) -> Blake2bParams {
-        let key_len = key.len();
-        assert(key_len <= 64, 'key must be <= 64 bytes');
-
-        let key_words = bytes_to_u64_array_8(key);
-        Blake2bParams { key_length: key_len.try_into().unwrap(), key: key_words, ..self }
+    /// Panics if key_length exceeds 64 bytes.
+    fn key(self: Blake2bParams, key: [u64; 8], key_length: u8) -> Blake2bParams {
+        assert(key_length <= 64, 'key must be <= 64 bytes');
+        Blake2bParams { key_length, key, ..self }
     }
 
-    /// Sets the salt value (up to 16 bytes).
+    /// Sets the salt value (16 bytes as two little-endian u64 words).
     ///
-    /// Salt is used for randomized hashing. If shorter than 16 bytes,
-    /// it will be padded with zeros.
-    ///
-    /// # Panics
-    /// Panics if salt exceeds 16 bytes.
-    fn salt(self: Blake2bParams, salt: @ByteArray) -> Blake2bParams {
-        assert(salt.len() <= 16, 'salt must be <= 16 bytes');
-        let salt_words = bytes_to_u64_array_2(salt);
-        Blake2bParams { salt: salt_words, ..self }
+    /// Salt is used for randomized hashing.
+    fn salt(self: Blake2bParams, salt: [u64; 2]) -> Blake2bParams {
+        Blake2bParams { salt, ..self }
     }
 
-    /// Sets the personalization string (up to 16 bytes).
+    /// Sets the personalization string (16 bytes as two little-endian u64 words).
     ///
-    /// Personalization is used for domain separation. If shorter than
-    /// 16 bytes, it will be padded with zeros.
-    ///
-    /// # Panics
-    /// Panics if personalization exceeds 16 bytes.
-    fn personal(self: Blake2bParams, personal: @ByteArray) -> Blake2bParams {
-        assert(personal.len() <= 16, 'personal must be <= 16 bytes');
-        let personal_words = bytes_to_u64_array_2(personal);
-        Blake2bParams { personal: personal_words, ..self }
+    /// Personalization is used for domain separation.
+    fn personal(self: Blake2bParams, personal: [u64; 2]) -> Blake2bParams {
+        Blake2bParams { personal, ..self }
     }
 
     /// Sets the fanout for tree hashing.
@@ -711,11 +729,6 @@ pub impl Blake2bParamsImpl of Blake2bParamsTrait {
         Blake2bParams { inner_length: length, ..self }
     }
 
-    /// Marks this node as the last in its row for tree hashing.
-    fn last_node(self: Blake2bParams, last: bool) -> Blake2bParams {
-        Blake2bParams { last_node: last, ..self }
-    }
-
     /// Creates a Hasher for incremental hashing with these parameters.
     fn to_state(self: Blake2bParams) -> Blake2bHasher {
         let h = self.compute_initial_state();
@@ -726,7 +739,6 @@ pub impl Blake2bParamsImpl of Blake2bParamsTrait {
             pending_bytes: 0,
             byte_count: 0,
             hash_length: self.hash_length,
-            last_node: self.last_node,
             is_keyed: self.key_length > 0,
         };
 
@@ -756,10 +768,21 @@ pub impl Blake2bParamsImpl of Blake2bParamsTrait {
         state
     }
 
-    /// Performs a one-shot hash with these parameters.
-    fn hash(self: Blake2bParams, input: @ByteArray) -> Array<u8> {
+    /// Performs a one-shot hash with input array.
+    ///
+    /// Returns the raw hash state. Use `hash_bytearray` for ByteArray input.
+    fn hash(self: Blake2bParams, input: Array<u8>) -> Blake2bState {
         let mut state = self.to_state();
         state.update(input);
+        state.finalize()
+    }
+
+    /// Performs a one-shot hash with ByteArray input.
+    ///
+    /// Returns the raw hash state.
+    fn hash_bytearray(self: Blake2bParams, input: @ByteArray) -> Blake2bState {
+        let mut state = self.to_state();
+        state.update_bytearray(input);
         state.finalize()
     }
 
@@ -767,15 +790,23 @@ pub impl Blake2bParamsImpl of Blake2bParamsTrait {
     ///
     /// This enables fluent API usage:
     /// ```
-    /// let hash = Blake2bParams::new()
+    /// let input: Array<u8> = array![0x68, 0x65, 0x6c, 0x6c, 0x6f];
+    /// let state = Blake2bParams::new()
     ///     .hash_length(32)
-    ///     .personal(@"myapp_______")
-    ///     .update(@"input data")
+    ///     .personal([0x7070615f79706d79, 0x5f5f5f5f5f5f5f5f])
+    ///     .update(input)
     ///     .finalize();
     /// ```
-    fn update(self: Blake2bParams, input: @ByteArray) -> Blake2bHasher {
+    fn update(self: Blake2bParams, input: Array<u8>) -> Blake2bHasher {
         let mut state = self.to_state();
         state.update(input);
+        state
+    }
+
+    /// Creates a hasher, updates it with ByteArray input, and returns it for chaining.
+    fn update_bytearray(self: Blake2bParams, input: @ByteArray) -> Blake2bHasher {
+        let mut state = self.to_state();
+        state.update_bytearray(input);
         state
     }
 }
@@ -842,8 +873,6 @@ pub struct Blake2bHasher {
     byte_count: u64,
     /// Configured hash output length
     hash_length: u8,
-    /// Whether this is the last node in tree mode
-    last_node: bool,
     /// Whether this state was initialized with a key
     is_keyed: bool,
 }
@@ -857,7 +886,52 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
     }
 
     /// Updates the hash state with additional input data.
-    fn update(ref self: Blake2bHasher, input: @ByteArray) {
+    fn update(ref self: Blake2bHasher, input: Array<u8>) {
+        let input_len = input.len();
+        if input_len == 0 {
+            return;
+        }
+
+        // If buffer is full (e.g., from keyed hashing) and we have new data,
+        // compress the buffer first
+        if self.buffer.len() == 16 {
+            self.byte_count += 128;
+            let block = extract_block_16_u64(@self.buffer, 0);
+            self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
+            self.buffer = ArrayTrait::new();
+        }
+
+        let mut i: usize = 0;
+
+        // Process each input byte
+        while i < input_len {
+            let byte: u64 = (*input[i]).into();
+            let shift: usize = self.pending_bytes.into() * 8;
+            self.pending_word = self.pending_word | (byte * pow2_u64(shift));
+            self.pending_bytes += 1;
+
+            // If we have a complete word (8 bytes), add it to the buffer
+            if self.pending_bytes == 8 {
+                // Check if buffer is full BEFORE appending
+                // We compress if buffer is full and we have more data to process
+                if self.buffer.len() == 16 {
+                    self.byte_count += 128;
+                    let block = extract_block_16_u64(@self.buffer, 0);
+                    self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
+                    self.buffer = ArrayTrait::new();
+                }
+
+                self.buffer.append(self.pending_word);
+                self.pending_word = 0;
+                self.pending_bytes = 0;
+            }
+
+            i += 1;
+        };
+    }
+
+    /// Updates the hash state with ByteArray input.
+    fn update_bytearray(ref self: Blake2bHasher, input: @ByteArray) {
         let input_len = input.len();
         if input_len == 0 {
             return;
@@ -901,10 +975,8 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
         };
     }
 
-    /// Finalizes the hash and returns the digest.
-    ///
-    /// The returned array length equals the configured hash_length.
-    fn finalize(ref self: Blake2bHasher) -> Array<u8> {
+    /// Finalizes the hash and returns the raw state.
+    fn finalize(ref self: Blake2bHasher) -> Blake2bState {
         // Add any pending partial word to the buffer
         if self.pending_bytes > 0 {
             self.buffer.append(self.pending_word);
@@ -931,25 +1003,8 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
         // Extract final block
         let block = extract_block_16_u64(@self.buffer, 0);
 
-        // Finalize
-        self.h = blake2b_finalize(self.h, final_byte_count, BoxTrait::new(block));
-
-        // Convert state to bytes (little-endian) and truncate to hash_length
-        let [s0, s1, s2, s3, s4, s5, s6, s7] = self.h.unbox();
-        let hash_len: usize = self.hash_length.into();
-
-        // Extract bytes from each word (little-endian)
-        let mut result: Array<u8> = ArrayTrait::new();
-        append_word_bytes_u64(ref result, s0, hash_len, 0);
-        append_word_bytes_u64(ref result, s1, hash_len, 8);
-        append_word_bytes_u64(ref result, s2, hash_len, 16);
-        append_word_bytes_u64(ref result, s3, hash_len, 24);
-        append_word_bytes_u64(ref result, s4, hash_len, 32);
-        append_word_bytes_u64(ref result, s5, hash_len, 40);
-        append_word_bytes_u64(ref result, s6, hash_len, 48);
-        append_word_bytes_u64(ref result, s7, hash_len, 56);
-
-        result
+        // Finalize and return state
+        blake2b_finalize(self.h, final_byte_count, BoxTrait::new(block))
     }
 
     /// Returns the number of bytes that have been processed.
@@ -984,11 +1039,24 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
 /// # Examples
 /// ```
 /// use core::blake::blake2s;
-/// let hash = blake2s(@"hello world");
-/// assert!(hash.len() == 32);
+/// let input: Array<u8> = array![0x68, 0x65, 0x6c, 0x6c, 0x6f];
+/// let state = blake2s(input);
 /// ```
-pub fn blake2s(input: @ByteArray) -> Array<u8> {
+pub fn blake2s(input: Array<u8>) -> Blake2sState {
     Blake2sParamsImpl::hash(Blake2sParamsImpl::new(), input)
+}
+
+/// Computes the Blake2s-256 hash of ByteArray input.
+///
+/// This is equivalent to `Blake2sParams::new().hash_bytearray(input)`.
+///
+/// # Examples
+/// ```
+/// use core::blake::blake2s_bytearray;
+/// let state = blake2s_bytearray(@"hello world");
+/// ```
+pub fn blake2s_bytearray(input: @ByteArray) -> Blake2sState {
+    Blake2sParamsImpl::hash_bytearray(Blake2sParamsImpl::new(), input)
 }
 
 /// Computes the Blake2b-512 hash of the input.
@@ -998,112 +1066,29 @@ pub fn blake2s(input: @ByteArray) -> Array<u8> {
 /// # Examples
 /// ```
 /// use core::blake::blake2b;
-/// let hash = blake2b(@"hello world");
-/// assert!(hash.len() == 64);
+/// let input: Array<u8> = array![0x68, 0x65, 0x6c, 0x6c, 0x6f];
+/// let state = blake2b(input);
 /// ```
-pub fn blake2b(input: @ByteArray) -> Array<u8> {
+pub fn blake2b(input: Array<u8>) -> Blake2bState {
     Blake2bParamsImpl::hash(Blake2bParamsImpl::new(), input)
+}
+
+/// Computes the Blake2b-512 hash of ByteArray input.
+///
+/// This is equivalent to `Blake2bParams::new().hash_bytearray(input)`.
+///
+/// # Examples
+/// ```
+/// use core::blake::blake2b_bytearray;
+/// let state = blake2b_bytearray(@"hello world");
+/// ```
+pub fn blake2b_bytearray(input: @ByteArray) -> Blake2bState {
+    Blake2bParamsImpl::hash_bytearray(Blake2bParamsImpl::new(), input)
 }
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/// Converts a ByteArray to an array of 2 u32 words (little-endian).
-fn bytes_to_u32_array_2(bytes: @ByteArray) -> [u32; 2] {
-    let len = bytes.len();
-    let mut words: Array<u32> = ArrayTrait::new();
-
-    let mut word_idx: usize = 0;
-    while word_idx < 2 {
-        let mut word: u32 = 0;
-        let mut byte_idx: usize = 0;
-        while byte_idx < 4 {
-            let global_idx = word_idx * 4 + byte_idx;
-            if global_idx < len {
-                let byte: u32 = bytes.at(global_idx).unwrap().into();
-                word = word | (byte * pow2_u32(byte_idx * 8));
-            }
-            byte_idx += 1;
-        };
-        words.append(word);
-        word_idx += 1;
-    };
-
-    [*words[0], *words[1]]
-}
-
-/// Converts a ByteArray to an array of 8 u32 words (little-endian).
-fn bytes_to_u32_array_8(bytes: @ByteArray) -> [u32; 8] {
-    let len = bytes.len();
-    let mut words: Array<u32> = ArrayTrait::new();
-
-    let mut word_idx: usize = 0;
-    while word_idx < 8 {
-        let mut word: u32 = 0;
-        let mut byte_idx: usize = 0;
-        while byte_idx < 4 {
-            let global_idx = word_idx * 4 + byte_idx;
-            if global_idx < len {
-                let byte: u32 = bytes.at(global_idx).unwrap().into();
-                word = word | (byte * pow2_u32(byte_idx * 8));
-            }
-            byte_idx += 1;
-        };
-        words.append(word);
-        word_idx += 1;
-    };
-
-    [*words[0], *words[1], *words[2], *words[3], *words[4], *words[5], *words[6], *words[7]]
-}
-
-/// Converts a ByteArray to an array of 2 u64 words (little-endian).
-fn bytes_to_u64_array_2(bytes: @ByteArray) -> [u64; 2] {
-    let len = bytes.len();
-    let mut words: Array<u64> = ArrayTrait::new();
-
-    let mut word_idx: usize = 0;
-    while word_idx < 2 {
-        let mut word: u64 = 0;
-        let mut byte_idx: usize = 0;
-        while byte_idx < 8 {
-            let global_idx = word_idx * 8 + byte_idx;
-            if global_idx < len {
-                let byte: u64 = bytes.at(global_idx).unwrap().into();
-                word = word | (byte * pow2_u64(byte_idx * 8));
-            }
-            byte_idx += 1;
-        };
-        words.append(word);
-        word_idx += 1;
-    };
-
-    [*words[0], *words[1]]
-}
-
-/// Converts a ByteArray to an array of 8 u64 words (little-endian).
-fn bytes_to_u64_array_8(bytes: @ByteArray) -> [u64; 8] {
-    let len = bytes.len();
-    let mut words: Array<u64> = ArrayTrait::new();
-
-    let mut word_idx: usize = 0;
-    while word_idx < 8 {
-        let mut word: u64 = 0;
-        let mut byte_idx: usize = 0;
-        while byte_idx < 8 {
-            let global_idx = word_idx * 8 + byte_idx;
-            if global_idx < len {
-                let byte: u64 = bytes.at(global_idx).unwrap().into();
-                word = word | (byte * pow2_u64(byte_idx * 8));
-            }
-            byte_idx += 1;
-        };
-        words.append(word);
-        word_idx += 1;
-    };
-
-    [*words[0], *words[1], *words[2], *words[3], *words[4], *words[5], *words[6], *words[7]]
-}
 
 /// Extracts a 16-word block from a u32 array starting at the given offset.
 fn extract_block_16(arr: @Array<u32>, offset: usize) -> [u32; 16] {
@@ -1196,51 +1181,5 @@ fn pow2_u64(n: usize) -> u64 {
             i += 1;
         };
         result
-    }
-}
-
-/// Appends bytes from a u32 word to the result array, respecting hash_len limit.
-/// word_offset is the byte offset of this word in the overall output.
-fn append_word_bytes(ref result: Array<u8>, word: u32, hash_len: usize, word_offset: usize) {
-    if word_offset < hash_len {
-        result.append((word & 0xFF).try_into().unwrap());
-    }
-    if word_offset + 1 < hash_len {
-        result.append(((word / 0x100) & 0xFF).try_into().unwrap());
-    }
-    if word_offset + 2 < hash_len {
-        result.append(((word / 0x10000) & 0xFF).try_into().unwrap());
-    }
-    if word_offset + 3 < hash_len {
-        result.append(((word / 0x1000000) & 0xFF).try_into().unwrap());
-    }
-}
-
-/// Appends bytes from a u64 word to the result array, respecting hash_len limit.
-/// word_offset is the byte offset of this word in the overall output.
-fn append_word_bytes_u64(ref result: Array<u8>, word: u64, hash_len: usize, word_offset: usize) {
-    if word_offset < hash_len {
-        result.append((word & 0xFF).try_into().unwrap());
-    }
-    if word_offset + 1 < hash_len {
-        result.append(((word / 0x100) & 0xFF).try_into().unwrap());
-    }
-    if word_offset + 2 < hash_len {
-        result.append(((word / 0x10000) & 0xFF).try_into().unwrap());
-    }
-    if word_offset + 3 < hash_len {
-        result.append(((word / 0x1000000) & 0xFF).try_into().unwrap());
-    }
-    if word_offset + 4 < hash_len {
-        result.append(((word / 0x100000000) & 0xFF).try_into().unwrap());
-    }
-    if word_offset + 5 < hash_len {
-        result.append(((word / 0x10000000000) & 0xFF).try_into().unwrap());
-    }
-    if word_offset + 6 < hash_len {
-        result.append(((word / 0x1000000000000) & 0xFF).try_into().unwrap());
-    }
-    if word_offset + 7 < hash_len {
-        result.append(((word / 0x100000000000000) & 0xFF).try_into().unwrap());
     }
 }
