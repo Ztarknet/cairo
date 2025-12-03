@@ -811,10 +811,13 @@ pub impl Blake2bParamsImpl of Blake2bParamsTrait {
     }
 }
 
-/// Internal methods for Blake2bParams
+/// Methods for computing initial state from Blake2bParams.
+/// Useful for pre-computing state when hashing many messages with the same parameters.
 #[generate_trait]
-impl Blake2bParamsInternal of Blake2bParamsInternalTrait {
+pub impl Blake2bParamsStateImpl of Blake2bParamsStateTrait {
     /// Computes the initial state by XORing IV with parameter block.
+    /// This can be used to pre-compute the initial state for repeated hashing
+    /// with the same parameters (e.g., same personalization and hash length).
     fn compute_initial_state(self: @Blake2bParams) -> Blake2bState {
         let [iv0, iv1, iv2, iv3, iv4, iv5, iv6, iv7] = blake2b_const::IV;
 
@@ -877,12 +880,43 @@ pub struct Blake2bHasher {
     is_keyed: bool,
 }
 
+/// Manual Clone implementation for Blake2bHasher.
+/// This allows cloning a mid-state hasher for batch hashing optimizations.
+pub impl Blake2bHasherClone of Clone<Blake2bHasher> {
+    fn clone(self: @Blake2bHasher) -> Blake2bHasher {
+        Blake2bHasher {
+            h: *self.h,
+            buffer: self.buffer.clone(),
+            pending_word: *self.pending_word,
+            pending_bytes: *self.pending_bytes,
+            byte_count: *self.byte_count,
+            hash_length: *self.hash_length,
+            is_keyed: *self.is_keyed,
+        }
+    }
+}
+
 /// Trait for Blake2bHasher operations.
 #[generate_trait]
 pub impl Blake2bHasherImpl of Blake2bHasherTrait {
     /// Creates a new Blake2bHasher with default parameters.
     fn new() -> Blake2bHasher {
         Blake2bParamsImpl::to_state(Blake2bParamsImpl::new())
+    }
+
+    /// Clones the hasher state for batch hashing optimizations.
+    /// This allows pre-computing a base state and cloning it for each hash
+    /// when hashing multiple messages with the same prefix.
+    fn clone_state(self: @Blake2bHasher) -> Blake2bHasher {
+        Blake2bHasher {
+            h: *self.h,
+            buffer: self.buffer.clone(),
+            pending_word: *self.pending_word,
+            pending_bytes: *self.pending_bytes,
+            byte_count: *self.byte_count,
+            hash_length: *self.hash_length,
+            is_keyed: *self.is_keyed,
+        }
     }
 
     /// Updates the hash state with additional input data.
