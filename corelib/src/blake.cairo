@@ -40,7 +40,8 @@
 
 use crate::array::{ArrayTrait};
 use crate::box::BoxTrait;
-use crate::byte_array::ByteArrayTrait;
+use crate::byte_array::{ByteArrayTrait, ToByteSpanTrait};
+use crate::iter::IntoIterator;
 use crate::option::OptionTrait;
 use crate::traits::{Into, TryInto};
 
@@ -446,8 +447,7 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
 
     /// Updates the hash state with additional input data.
     fn update(ref self: Blake2sHasher, input: Array<u8>) {
-        let input_len = input.len();
-        if input_len == 0 {
+        if input.len() == 0 {
             return;
         }
 
@@ -455,18 +455,16 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
         // compress the buffer first
         if self.buffer.len() == 16 {
             self.byte_count += 64;
-            let block = extract_block_16(@self.buffer, 0);
+            let block = array_to_block_16(@self.buffer);
             self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
             self.buffer = ArrayTrait::new();
         }
 
-        let mut i: usize = 0;
-
-        // Process each input byte
-        while i < input_len {
-            let byte: u32 = (*input[i]).into();
-            let shift: usize = self.pending_bytes.into() * 8;
-            self.pending_word = self.pending_word | (byte * pow2_u32(shift));
+        // Process each input byte using span iteration (more efficient than indexing)
+        let mut input_span = input.span();
+        while let Option::Some(byte_ref) = input_span.pop_front() {
+            let byte: u32 = (*byte_ref).into();
+            self.pending_word = self.pending_word | (byte * byte_shift_u32(self.pending_bytes));
             self.pending_bytes += 1;
 
             // If we have a complete word, add it to the buffer
@@ -475,7 +473,7 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
                 // We compress if buffer is full and we have more data to process
                 if self.buffer.len() == 16 {
                     self.byte_count += 64;
-                    let block = extract_block_16(@self.buffer, 0);
+                    let block = array_to_block_16(@self.buffer);
                     self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
                     self.buffer = ArrayTrait::new();
                 }
@@ -484,8 +482,6 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
                 self.pending_word = 0;
                 self.pending_bytes = 0;
             }
-
-            i += 1;
         };
     }
 
@@ -500,7 +496,7 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
         // compress the buffer first
         if self.buffer.len() == 16 {
             self.byte_count += 64;
-            let block = extract_block_16(@self.buffer, 0);
+            let block = array_to_block_16(@self.buffer);
             self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
             self.buffer = ArrayTrait::new();
         }
@@ -510,8 +506,7 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
         // Process each input byte
         while i < input_len {
             let byte: u32 = input.at(i).unwrap().into();
-            let shift: usize = self.pending_bytes.into() * 8;
-            self.pending_word = self.pending_word | (byte * pow2_u32(shift));
+            self.pending_word = self.pending_word | (byte * byte_shift_u32(self.pending_bytes));
             self.pending_bytes += 1;
 
             // If we have a complete word, add it to the buffer
@@ -520,7 +515,7 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
                 // We compress if buffer is full and we have more data to process
                 if self.buffer.len() == 16 {
                     self.byte_count += 64;
-                    let block = extract_block_16(@self.buffer, 0);
+                    let block = array_to_block_16(@self.buffer);
                     self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
                     self.buffer = ArrayTrait::new();
                 }
@@ -560,7 +555,7 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
         };
 
         // Extract final block
-        let block = extract_block_16(@self.buffer, 0);
+        let block = array_to_block_16(@self.buffer);
 
         // Finalize and return state
         blake2s_finalize(self.h, final_byte_count, BoxTrait::new(block))
@@ -921,8 +916,7 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
 
     /// Updates the hash state with additional input data.
     fn update(ref self: Blake2bHasher, input: Array<u8>) {
-        let input_len = input.len();
-        if input_len == 0 {
+        if input.len() == 0 {
             return;
         }
 
@@ -930,18 +924,16 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
         // compress the buffer first
         if self.buffer.len() == 16 {
             self.byte_count += 128;
-            let block = extract_block_16_u64(@self.buffer, 0);
+            let block = array_to_block_16_u64(@self.buffer);
             self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
             self.buffer = ArrayTrait::new();
         }
 
-        let mut i: usize = 0;
-
-        // Process each input byte
-        while i < input_len {
-            let byte: u64 = (*input[i]).into();
-            let shift: usize = self.pending_bytes.into() * 8;
-            self.pending_word = self.pending_word | (byte * pow2_u64(shift));
+        // Process each input byte using span iteration (more efficient than indexing)
+        let mut input_span = input.span();
+        while let Option::Some(byte_ref) = input_span.pop_front() {
+            let byte: u64 = (*byte_ref).into();
+            self.pending_word = self.pending_word | (byte * byte_shift_u64(self.pending_bytes));
             self.pending_bytes += 1;
 
             // If we have a complete word (8 bytes), add it to the buffer
@@ -950,7 +942,7 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
                 // We compress if buffer is full and we have more data to process
                 if self.buffer.len() == 16 {
                     self.byte_count += 128;
-                    let block = extract_block_16_u64(@self.buffer, 0);
+                    let block = array_to_block_16_u64(@self.buffer);
                     self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
                     self.buffer = ArrayTrait::new();
                 }
@@ -959,15 +951,12 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
                 self.pending_word = 0;
                 self.pending_bytes = 0;
             }
-
-            i += 1;
         };
     }
 
     /// Updates the hash state with ByteArray input.
     fn update_bytearray(ref self: Blake2bHasher, input: @ByteArray) {
-        let input_len = input.len();
-        if input_len == 0 {
+        if input.len() == 0 {
             return;
         }
 
@@ -975,18 +964,16 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
         // compress the buffer first
         if self.buffer.len() == 16 {
             self.byte_count += 128;
-            let block = extract_block_16_u64(@self.buffer, 0);
+            let block = array_to_block_16_u64(@self.buffer);
             self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
             self.buffer = ArrayTrait::new();
         }
 
-        let mut i: usize = 0;
-
-        // Process each input byte
-        while i < input_len {
-            let byte: u64 = input.at(i).unwrap().into();
-            let shift: usize = self.pending_bytes.into() * 8;
-            self.pending_word = self.pending_word | (byte * pow2_u64(shift));
+        // Process each input byte using span iteration (more efficient than indexing)
+        let mut input_iter = input.span().into_iter();
+        while let Option::Some(byte) = input_iter.next() {
+            let byte_u64: u64 = byte.into();
+            self.pending_word = self.pending_word | (byte_u64 * byte_shift_u64(self.pending_bytes));
             self.pending_bytes += 1;
 
             // If we have a complete word (8 bytes), add it to the buffer
@@ -995,7 +982,7 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
                 // We compress if buffer is full and we have more data to process
                 if self.buffer.len() == 16 {
                     self.byte_count += 128;
-                    let block = extract_block_16_u64(@self.buffer, 0);
+                    let block = array_to_block_16_u64(@self.buffer);
                     self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
                     self.buffer = ArrayTrait::new();
                 }
@@ -1004,8 +991,6 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
                 self.pending_word = 0;
                 self.pending_bytes = 0;
             }
-
-            i += 1;
         };
     }
 
@@ -1035,7 +1020,7 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
         };
 
         // Extract final block
-        let block = extract_block_16_u64(@self.buffer, 0);
+        let block = array_to_block_16_u64(@self.buffer);
 
         // Finalize and return state
         blake2b_finalize(self.h, final_byte_count, BoxTrait::new(block))
@@ -1124,96 +1109,50 @@ pub fn blake2b_bytearray(input: @ByteArray) -> Blake2bState {
 // Helper Functions
 // ============================================================================
 
-/// Extracts a 16-word block from a u32 array starting at the given offset.
-fn extract_block_16(arr: @Array<u32>, offset: usize) -> [u32; 16] {
-    [
-        *arr[offset],
-        *arr[offset + 1],
-        *arr[offset + 2],
-        *arr[offset + 3],
-        *arr[offset + 4],
-        *arr[offset + 5],
-        *arr[offset + 6],
-        *arr[offset + 7],
-        *arr[offset + 8],
-        *arr[offset + 9],
-        *arr[offset + 10],
-        *arr[offset + 11],
-        *arr[offset + 12],
-        *arr[offset + 13],
-        *arr[offset + 14],
-        *arr[offset + 15],
-    ]
+/// Converts a 16-element u32 array to a fixed-size array.
+/// Uses try_into for efficient conversion from span to fixed array.
+#[inline(always)]
+fn array_to_block_16(arr: @Array<u32>) -> [u32; 16] {
+    let block_ref: @Box<[u32; 16]> = arr.span().try_into().unwrap();
+    block_ref.unbox()
 }
 
-/// Extracts a 16-word block from a u64 array starting at the given offset.
-fn extract_block_16_u64(arr: @Array<u64>, offset: usize) -> [u64; 16] {
-    [
-        *arr[offset],
-        *arr[offset + 1],
-        *arr[offset + 2],
-        *arr[offset + 3],
-        *arr[offset + 4],
-        *arr[offset + 5],
-        *arr[offset + 6],
-        *arr[offset + 7],
-        *arr[offset + 8],
-        *arr[offset + 9],
-        *arr[offset + 10],
-        *arr[offset + 11],
-        *arr[offset + 12],
-        *arr[offset + 13],
-        *arr[offset + 14],
-        *arr[offset + 15],
-    ]
+/// Converts a 16-element u64 array to a fixed-size array.
+/// Uses try_into for efficient conversion from span to fixed array.
+#[inline(always)]
+fn array_to_block_16_u64(arr: @Array<u64>) -> [u64; 16] {
+    let block_ref: @Box<[u64; 16]> = arr.span().try_into().unwrap();
+    block_ref.unbox()
 }
 
-/// Returns 2^n for u32.
-fn pow2_u32(n: usize) -> u32 {
-    if n == 0 {
-        1
-    } else if n == 8 {
-        0x100
-    } else if n == 16 {
-        0x10000
-    } else if n == 24 {
-        0x1000000
-    } else {
-        let mut result: u32 = 1;
-        let mut i: usize = 0;
-        while i < n {
-            result *= 2;
-            i += 1;
-        };
-        result
-    }
+/// Returns 2^(byte_pos * 8) for u32 using lookup table.
+/// Takes byte position directly (0-3) instead of bit shift amount.
+#[inline(always)]
+fn byte_shift_u32(byte_pos: u8) -> u32 {
+    let lookup: [u32; 4] = [
+        0x1,        // 2^0  (byte 0)
+        0x100,      // 2^8  (byte 1)
+        0x10000,    // 2^16 (byte 2)
+        0x1000000,  // 2^24 (byte 3)
+    ];
+    let idx: usize = byte_pos.into();
+    *lookup.span()[idx]
 }
 
-/// Returns 2^n for u64.
-fn pow2_u64(n: usize) -> u64 {
-    if n == 0 {
-        1
-    } else if n == 8 {
-        0x100
-    } else if n == 16 {
-        0x10000
-    } else if n == 24 {
-        0x1000000
-    } else if n == 32 {
-        0x100000000
-    } else if n == 40 {
-        0x10000000000
-    } else if n == 48 {
-        0x1000000000000
-    } else if n == 56 {
-        0x100000000000000
-    } else {
-        let mut result: u64 = 1;
-        let mut i: usize = 0;
-        while i < n {
-            result *= 2;
-            i += 1;
-        };
-        result
-    }
+/// Returns 2^(byte_pos * 8) for u64 using lookup table.
+/// Takes byte position directly (0-7) instead of bit shift amount.
+#[inline(always)]
+fn byte_shift_u64(byte_pos: u8) -> u64 {
+    let lookup: [u64; 8] = [
+        0x1,                // 2^0  (byte 0)
+        0x100,              // 2^8  (byte 1)
+        0x10000,            // 2^16 (byte 2)
+        0x1000000,          // 2^24 (byte 3)
+        0x100000000,        // 2^32 (byte 4)
+        0x10000000000,      // 2^40 (byte 5)
+        0x1000000000000,    // 2^48 (byte 6)
+        0x100000000000000,  // 2^56 (byte 7)
+    ];
+    let idx: usize = byte_pos.into();
+    *lookup.span()[idx]
 }
