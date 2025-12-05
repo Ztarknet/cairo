@@ -121,6 +121,20 @@ pub mod blake2s_const {
         0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
         0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
     ];
+
+    /// Pre-computed initial state for Blake2s-256 (default configuration).
+    /// IV XORed with parameter block: hash_length=32, no key, fanout=1, depth=1.
+    /// This avoids recomputing the initial state for each hash operation.
+    pub const IV_256: [u32; 8] = [
+        0x6B08E647, // IV[0] ^ 0x01010020
+        0xBB67AE85, // IV[1] ^ 0
+        0x3C6EF372, // IV[2] ^ 0
+        0xA54FF53A, // IV[3] ^ 0
+        0x510E527F, // IV[4] ^ 0 (salt)
+        0x9B05688C, // IV[5] ^ 0 (salt)
+        0x1F83D9AB, // IV[6] ^ 0 (personal)
+        0x5BE0CD19, // IV[7] ^ 0 (personal)
+    ];
 }
 
 /// Blake2b constants
@@ -142,6 +156,20 @@ pub mod blake2b_const {
         0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
         0x510e527fade682d1, 0x9b05688c2b3e6c1f,
         0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
+    ];
+
+    /// Pre-computed initial state for Blake2b-512 (default configuration).
+    /// IV XORed with parameter block: hash_length=64, no key, fanout=1, depth=1.
+    /// This avoids recomputing the initial state for each hash operation.
+    pub const IV_512: [u64; 8] = [
+        0x6a09e667f3bcc948, // IV[0] ^ 0x01010040
+        0xbb67ae8584caa73b, // IV[1] ^ 0
+        0x3c6ef372fe94f82b, // IV[2] ^ 0
+        0xa54ff53a5f1d36f1, // IV[3] ^ 0
+        0x510e527fade682d1, // IV[4] ^ 0 (salt)
+        0x9b05688c2b3e6c1f, // IV[5] ^ 0 (salt)
+        0x1f83d9abfb41bd6b, // IV[6] ^ 0 (personal)
+        0x5be0cd19137e2179, // IV[7] ^ 0 (personal)
     ];
 }
 
@@ -440,9 +468,21 @@ pub struct Blake2sHasher {
 /// Trait for Blake2sHasher operations.
 #[generate_trait]
 pub impl Blake2sHasherImpl of Blake2sHasherTrait {
-    /// Creates a new Blake2sHasher with default parameters.
+    /// Creates a new Blake2sHasher with default parameters (Blake2s-256).
+    ///
+    /// This uses a pre-computed initial state for efficiency.
+    /// For custom parameters, use `Blake2sParams::new().to_state()` instead.
     fn new() -> Blake2sHasher {
-        Blake2sParamsImpl::to_state(Blake2sParamsImpl::new())
+        // Use pre-computed IV for default Blake2s-256 configuration
+        Blake2sHasher {
+            h: BoxTrait::new(blake2s_const::IV_256),
+            buffer: ArrayTrait::new(),
+            pending_word: 0,
+            pending_bytes: 0,
+            byte_count: 0,
+            hash_length: 32,
+            is_keyed: false,
+        }
     }
 
     /// Updates the hash state with additional input data.
@@ -471,6 +511,77 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
             if self.pending_bytes == 4 {
                 // Check if buffer is full BEFORE appending
                 // We compress if buffer is full and we have more data to process
+                if self.buffer.len() == 16 {
+                    self.byte_count += 64;
+                    let block = array_to_block_16(@self.buffer);
+                    self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
+                    self.buffer = ArrayTrait::new();
+                }
+
+                self.buffer.append(self.pending_word);
+                self.pending_word = 0;
+                self.pending_bytes = 0;
+            }
+        };
+    }
+
+    /// Updates the hash state with a byte span, avoiding array allocation.
+    ///
+    /// This is more efficient than `update()` when you already have a Span<u8>
+    /// (e.g., from a slice of existing data) since it avoids copying to an Array.
+    /// Additionally, when aligned, processes 4 bytes at a time for better performance.
+    ///
+    /// # Examples
+    /// ```
+    /// let data: Array<u8> = array![1, 2, 3, 4, 5, 6, 7, 8];
+    /// let mut hasher = Blake2sHasherTrait::new();
+    /// hasher.update_span(data.span());
+    /// ```
+    fn update_span(ref self: Blake2sHasher, mut input: Span<u8>) {
+        if input.len() == 0 {
+            return;
+        }
+
+        // If buffer is full (e.g., from keyed hashing) and we have new data,
+        // compress the buffer first
+        if self.buffer.len() == 16 {
+            self.byte_count += 64;
+            let block = array_to_block_16(@self.buffer);
+            self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
+            self.buffer = ArrayTrait::new();
+        }
+
+        // Fast path: when pending_bytes is 0, we can process 4 bytes at a time
+        // This avoids the byte-by-byte shifting overhead for aligned data
+        while self.pending_bytes == 0 && input.len() >= 4 {
+            // Load 4 bytes as a little-endian u32 word
+            let b0: u32 = (*input.pop_front().unwrap()).into();
+            let b1: u32 = (*input.pop_front().unwrap()).into();
+            let b2: u32 = (*input.pop_front().unwrap()).into();
+            let b3: u32 = (*input.pop_front().unwrap()).into();
+
+            let word = b0 | (b1 * 0x100) | (b2 * 0x10000) | (b3 * 0x1000000);
+
+            // Check if buffer is full before appending
+            if self.buffer.len() == 16 {
+                self.byte_count += 64;
+                let block = array_to_block_16(@self.buffer);
+                self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
+                self.buffer = ArrayTrait::new();
+            }
+
+            self.buffer.append(word);
+        };
+
+        // Process remaining bytes (less than 4, or unaligned)
+        while let Option::Some(byte_ref) = input.pop_front() {
+            let byte: u32 = (*byte_ref).into();
+            self.pending_word = self.pending_word | (byte * byte_shift_u32(self.pending_bytes));
+            self.pending_bytes += 1;
+
+            // If we have a complete word, add it to the buffer
+            if self.pending_bytes == 4 {
+                // Check if buffer is full BEFORE appending
                 if self.buffer.len() == 16 {
                     self.byte_count += 64;
                     let block = array_to_block_16(@self.buffer);
@@ -961,9 +1072,21 @@ pub impl Blake2bHasherClone of Clone<Blake2bHasher> {
 /// Trait for Blake2bHasher operations.
 #[generate_trait]
 pub impl Blake2bHasherImpl of Blake2bHasherTrait {
-    /// Creates a new Blake2bHasher with default parameters.
+    /// Creates a new Blake2bHasher with default parameters (Blake2b-512).
+    ///
+    /// This uses a pre-computed initial state for efficiency.
+    /// For custom parameters, use `Blake2bParams::new().to_state()` instead.
     fn new() -> Blake2bHasher {
-        Blake2bParamsImpl::to_state(Blake2bParamsImpl::new())
+        // Use pre-computed IV for default Blake2b-512 configuration
+        Blake2bHasher {
+            h: BoxTrait::new(blake2b_const::IV_512),
+            buffer: ArrayTrait::new(),
+            pending_word: 0,
+            pending_bytes: 0,
+            byte_count: 0,
+            hash_length: 64,
+            is_keyed: false,
+        }
     }
 
     /// Clones the hasher state for batch hashing optimizations.
@@ -1007,6 +1130,88 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
             if self.pending_bytes == 8 {
                 // Check if buffer is full BEFORE appending
                 // We compress if buffer is full and we have more data to process
+                if self.buffer.len() == 16 {
+                    self.byte_count += 128;
+                    let block = array_to_block_16_u64(@self.buffer);
+                    self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
+                    self.buffer = ArrayTrait::new();
+                }
+
+                self.buffer.append(self.pending_word);
+                self.pending_word = 0;
+                self.pending_bytes = 0;
+            }
+        };
+    }
+
+    /// Updates the hash state with a byte span, avoiding array allocation.
+    ///
+    /// This is more efficient than `update()` when you already have a Span<u8>
+    /// (e.g., from a slice of existing data) since it avoids copying to an Array.
+    /// Additionally, when aligned, processes 8 bytes at a time for better performance.
+    ///
+    /// # Examples
+    /// ```
+    /// let data: Array<u8> = array![1, 2, 3, 4, 5, 6, 7, 8];
+    /// let mut hasher = Blake2bHasherTrait::new();
+    /// hasher.update_span(data.span());
+    /// ```
+    fn update_span(ref self: Blake2bHasher, mut input: Span<u8>) {
+        if input.len() == 0 {
+            return;
+        }
+
+        // If buffer is full (e.g., from keyed hashing) and we have new data,
+        // compress the buffer first
+        if self.buffer.len() == 16 {
+            self.byte_count += 128;
+            let block = array_to_block_16_u64(@self.buffer);
+            self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
+            self.buffer = ArrayTrait::new();
+        }
+
+        // Fast path: when pending_bytes is 0, we can process 8 bytes at a time
+        // This avoids the byte-by-byte shifting overhead for aligned data
+        while self.pending_bytes == 0 && input.len() >= 8 {
+            // Load 8 bytes as a little-endian u64 word
+            let b0: u64 = (*input.pop_front().unwrap()).into();
+            let b1: u64 = (*input.pop_front().unwrap()).into();
+            let b2: u64 = (*input.pop_front().unwrap()).into();
+            let b3: u64 = (*input.pop_front().unwrap()).into();
+            let b4: u64 = (*input.pop_front().unwrap()).into();
+            let b5: u64 = (*input.pop_front().unwrap()).into();
+            let b6: u64 = (*input.pop_front().unwrap()).into();
+            let b7: u64 = (*input.pop_front().unwrap()).into();
+
+            let word = b0
+                | (b1 * 0x100)
+                | (b2 * 0x10000)
+                | (b3 * 0x1000000)
+                | (b4 * 0x100000000)
+                | (b5 * 0x10000000000)
+                | (b6 * 0x1000000000000)
+                | (b7 * 0x100000000000000);
+
+            // Check if buffer is full before appending
+            if self.buffer.len() == 16 {
+                self.byte_count += 128;
+                let block = array_to_block_16_u64(@self.buffer);
+                self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
+                self.buffer = ArrayTrait::new();
+            }
+
+            self.buffer.append(word);
+        };
+
+        // Process remaining bytes (less than 8, or unaligned)
+        while let Option::Some(byte_ref) = input.pop_front() {
+            let byte: u64 = (*byte_ref).into();
+            self.pending_word = self.pending_word | (byte * byte_shift_u64(self.pending_bytes));
+            self.pending_bytes += 1;
+
+            // If we have a complete word (8 bytes), add it to the buffer
+            if self.pending_bytes == 8 {
+                // Check if buffer is full BEFORE appending
                 if self.buffer.len() == 16 {
                     self.byte_count += 128;
                     let block = array_to_block_16_u64(@self.buffer);
