@@ -529,6 +529,73 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
         };
     }
 
+    /// Updates the hash state with a single u32 value in little-endian byte order.
+    ///
+    /// This is optimized for small fixed-size updates and avoids the overhead
+    /// of creating an Array<u8>.
+    ///
+    /// # Examples
+    /// ```
+    /// let mut hasher = Blake2sHasherTrait::new();
+    /// hasher.update_u32_le(0xDEADBEEF);  // Adds bytes [0xEF, 0xBE, 0xAD, 0xDE]
+    /// ```
+    #[inline(always)]
+    fn update_u32_le(ref self: Blake2sHasher, value: u32) {
+        // If buffer is full, compress first
+        if self.buffer.len() == 16 {
+            self.byte_count += 64;
+            let block = array_to_block_16(@self.buffer);
+            self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
+            self.buffer = ArrayTrait::new();
+        }
+
+        // Extract 4 bytes from the u32 in little-endian order
+        let b0: u32 = value & 0xFF;
+        let b1: u32 = (value / 0x100) & 0xFF;
+        let b2: u32 = (value / 0x10000) & 0xFF;
+        let b3: u32 = (value / 0x1000000) & 0xFF;
+
+        // Process based on current pending_bytes alignment
+        if self.pending_bytes == 0 {
+            // Aligned: this completes exactly one word
+            let word = b0 | (b1 * 0x100) | (b2 * 0x10000) | (b3 * 0x1000000);
+            // Check buffer before appending
+            if self.buffer.len() == 16 {
+                self.byte_count += 64;
+                let block = array_to_block_16(@self.buffer);
+                self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
+                self.buffer = ArrayTrait::new();
+            }
+            self.buffer.append(word);
+            // pending_bytes stays 0, pending_word stays 0
+        } else {
+            // Unaligned: process byte by byte
+            let bytes: [u8; 4] = [
+                (value & 0xFF).try_into().unwrap(),
+                ((value / 0x100) & 0xFF).try_into().unwrap(),
+                ((value / 0x10000) & 0xFF).try_into().unwrap(),
+                ((value / 0x1000000) & 0xFF).try_into().unwrap(),
+            ];
+            let mut span = bytes.span();
+            while let Option::Some(byte_ref) = span.pop_front() {
+                let byte: u32 = (*byte_ref).into();
+                self.pending_word = self.pending_word | (byte * byte_shift_u32(self.pending_bytes));
+                self.pending_bytes += 1;
+                if self.pending_bytes == 4 {
+                    if self.buffer.len() == 16 {
+                        self.byte_count += 64;
+                        let block = array_to_block_16(@self.buffer);
+                        self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
+                        self.buffer = ArrayTrait::new();
+                    }
+                    self.buffer.append(self.pending_word);
+                    self.pending_word = 0;
+                    self.pending_bytes = 0;
+                }
+            };
+        }
+    }
+
     /// Finalizes the hash and returns the raw state.
     fn finalize(ref self: Blake2sHasher) -> Blake2sState {
         // Add any pending partial word to the buffer
@@ -992,6 +1059,83 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
                 self.pending_bytes = 0;
             }
         };
+    }
+
+    /// Updates the hash state with a single u32 value in little-endian byte order.
+    ///
+    /// This is optimized for small fixed-size updates (like Equihash 4-byte indices)
+    /// and avoids the overhead of creating an Array<u8>.
+    ///
+    /// # Examples
+    /// ```
+    /// let mut hasher = Blake2bHasherTrait::new();
+    /// hasher.update_u32_le(0xDEADBEEF);  // Adds bytes [0xEF, 0xBE, 0xAD, 0xDE]
+    /// ```
+    #[inline(always)]
+    fn update_u32_le(ref self: Blake2bHasher, value: u32) {
+        // If buffer is full, compress first
+        if self.buffer.len() == 16 {
+            self.byte_count += 128;
+            let block = array_to_block_16_u64(@self.buffer);
+            self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
+            self.buffer = ArrayTrait::new();
+        }
+
+        // Extract 4 bytes from the u32 in little-endian order
+        let b0: u64 = (value & 0xFF).into();
+        let b1: u64 = ((value / 0x100) & 0xFF).into();
+        let b2: u64 = ((value / 0x10000) & 0xFF).into();
+        let b3: u64 = ((value / 0x1000000) & 0xFF).into();
+
+        // Process based on current pending_bytes alignment
+        // This is optimized for the common case where pending_bytes is 0 or 4
+        if self.pending_bytes == 0 {
+            // Aligned: pack all 4 bytes into pending_word directly
+            self.pending_word = b0 | (b1 * 0x100) | (b2 * 0x10000) | (b3 * 0x1000000);
+            self.pending_bytes = 4;
+        } else if self.pending_bytes == 4 {
+            // Half-aligned: complete current word and start new one
+            self.pending_word = self.pending_word
+                | (b0 * 0x100000000)
+                | (b1 * 0x10000000000)
+                | (b2 * 0x1000000000000)
+                | (b3 * 0x100000000000000);
+            // Word complete, add to buffer
+            if self.buffer.len() == 16 {
+                self.byte_count += 128;
+                let block = array_to_block_16_u64(@self.buffer);
+                self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
+                self.buffer = ArrayTrait::new();
+            }
+            self.buffer.append(self.pending_word);
+            self.pending_word = 0;
+            self.pending_bytes = 0;
+        } else {
+            // Unaligned: process byte by byte (rare case)
+            let bytes: [u8; 4] = [
+                (value & 0xFF).try_into().unwrap(),
+                ((value / 0x100) & 0xFF).try_into().unwrap(),
+                ((value / 0x10000) & 0xFF).try_into().unwrap(),
+                ((value / 0x1000000) & 0xFF).try_into().unwrap(),
+            ];
+            let mut span = bytes.span();
+            while let Option::Some(byte_ref) = span.pop_front() {
+                let byte: u64 = (*byte_ref).into();
+                self.pending_word = self.pending_word | (byte * byte_shift_u64(self.pending_bytes));
+                self.pending_bytes += 1;
+                if self.pending_bytes == 8 {
+                    if self.buffer.len() == 16 {
+                        self.byte_count += 128;
+                        let block = array_to_block_16_u64(@self.buffer);
+                        self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
+                        self.buffer = ArrayTrait::new();
+                    }
+                    self.buffer.append(self.pending_word);
+                    self.pending_word = 0;
+                    self.pending_bytes = 0;
+                }
+            };
+        }
     }
 
     /// Finalizes the hash and returns the raw state.
