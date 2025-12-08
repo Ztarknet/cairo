@@ -486,6 +486,7 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
     }
 
     /// Updates the hash state with additional input data.
+    /// When aligned, processes 4 bytes at a time for better performance.
     fn update(ref self: Blake2sHasher, input: Array<u8>) {
         if input.len() == 0 {
             return;
@@ -500,8 +501,31 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
             self.buffer = ArrayTrait::new();
         }
 
-        // Process each input byte using span iteration (more efficient than indexing)
+        // Process using span iteration
         let mut input_span = input.span();
+
+        // Fast path: when pending_bytes is 0, process 4 bytes at a time
+        while self.pending_bytes == 0 && input_span.len() >= 4 {
+            // Load 4 bytes as a little-endian u32 word
+            let b0: u32 = (*input_span.pop_front().unwrap()).into();
+            let b1: u32 = (*input_span.pop_front().unwrap()).into();
+            let b2: u32 = (*input_span.pop_front().unwrap()).into();
+            let b3: u32 = (*input_span.pop_front().unwrap()).into();
+
+            let word = b0 | (b1 * 0x100) | (b2 * 0x10000) | (b3 * 0x1000000);
+
+            // Check if buffer is full before appending
+            if self.buffer.len() == 16 {
+                self.byte_count += 64;
+                let block = array_to_block_16(@self.buffer);
+                self.h = blake2s_compress(self.h, self.byte_count, BoxTrait::new(block));
+                self.buffer = ArrayTrait::new();
+            }
+
+            self.buffer.append(word);
+        };
+
+        // Process remaining bytes (less than 4, or unaligned)
         while let Option::Some(byte_ref) = input_span.pop_front() {
             let byte: u32 = (*byte_ref).into();
             self.pending_word = self.pending_word | (byte * byte_shift_u32(self.pending_bytes));
@@ -510,7 +534,6 @@ pub impl Blake2sHasherImpl of Blake2sHasherTrait {
             // If we have a complete word, add it to the buffer
             if self.pending_bytes == 4 {
                 // Check if buffer is full BEFORE appending
-                // We compress if buffer is full and we have more data to process
                 if self.buffer.len() == 16 {
                     self.byte_count += 64;
                     let block = array_to_block_16(@self.buffer);
@@ -1105,6 +1128,7 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
     }
 
     /// Updates the hash state with additional input data.
+    /// When aligned, processes 8 bytes at a time for better performance.
     fn update(ref self: Blake2bHasher, input: Array<u8>) {
         if input.len() == 0 {
             return;
@@ -1119,8 +1143,42 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
             self.buffer = ArrayTrait::new();
         }
 
-        // Process each input byte using span iteration (more efficient than indexing)
+        // Process using span iteration
         let mut input_span = input.span();
+
+        // Fast path: when pending_bytes is 0, process 8 bytes at a time
+        while self.pending_bytes == 0 && input_span.len() >= 8 {
+            // Load 8 bytes as a little-endian u64 word
+            let b0: u64 = (*input_span.pop_front().unwrap()).into();
+            let b1: u64 = (*input_span.pop_front().unwrap()).into();
+            let b2: u64 = (*input_span.pop_front().unwrap()).into();
+            let b3: u64 = (*input_span.pop_front().unwrap()).into();
+            let b4: u64 = (*input_span.pop_front().unwrap()).into();
+            let b5: u64 = (*input_span.pop_front().unwrap()).into();
+            let b6: u64 = (*input_span.pop_front().unwrap()).into();
+            let b7: u64 = (*input_span.pop_front().unwrap()).into();
+
+            let word = b0
+                | (b1 * 0x100)
+                | (b2 * 0x10000)
+                | (b3 * 0x1000000)
+                | (b4 * 0x100000000)
+                | (b5 * 0x10000000000)
+                | (b6 * 0x1000000000000)
+                | (b7 * 0x100000000000000);
+
+            // Check if buffer is full before appending
+            if self.buffer.len() == 16 {
+                self.byte_count += 128;
+                let block = array_to_block_16_u64(@self.buffer);
+                self.h = blake2b_compress(self.h, self.byte_count, BoxTrait::new(block));
+                self.buffer = ArrayTrait::new();
+            }
+
+            self.buffer.append(word);
+        };
+
+        // Process remaining bytes (less than 8, or unaligned)
         while let Option::Some(byte_ref) = input_span.pop_front() {
             let byte: u64 = (*byte_ref).into();
             self.pending_word = self.pending_word | (byte * byte_shift_u64(self.pending_bytes));
@@ -1129,7 +1187,6 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
             // If we have a complete word (8 bytes), add it to the buffer
             if self.pending_bytes == 8 {
                 // Check if buffer is full BEFORE appending
-                // We compress if buffer is full and we have more data to process
                 if self.buffer.len() == 16 {
                     self.byte_count += 128;
                     let block = array_to_block_16_u64(@self.buffer);
