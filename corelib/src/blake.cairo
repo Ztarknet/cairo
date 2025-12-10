@@ -40,6 +40,7 @@
 
 use crate::array::{ArrayTrait};
 use crate::box::BoxTrait;
+#[feature("byte-span")]
 use crate::byte_array::{ByteArrayTrait, ToByteSpanTrait};
 use crate::iter::IntoIterator;
 use crate::option::OptionTrait;
@@ -1398,6 +1399,15 @@ pub impl Blake2bHasherImpl of Blake2bHasherTrait {
                 }
             };
         }
+    }
+
+    fn update_u32_be(ref self: Blake2bHasher, value: u32) {
+        // Convert big-endian to little-endian and call update_u32_le
+        let le_value: u32 = ((value & 0xFF) * 0x1000000)
+            | (((value / 0x100) & 0xFF) * 0x10000)
+            | (((value / 0x10000) & 0xFF) * 0x100)
+            | ((value / 0x1000000) & 0xFF);
+        self.update_u32_le(le_value);
     }
 
     /// Finalizes the hash and returns the raw state.
